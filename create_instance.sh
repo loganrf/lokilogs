@@ -25,10 +25,9 @@ echo "--> Finding and downloading the latest Debian 12 template..."
 pveam update >/dev/null
 TEMPLATE=$(pveam available | grep -i 'system.*debian-12' | awk '{print $2}' | head -n 1)
 pveam download $TEMPLATE_STORAGE $TEMPLATE >/dev/null || true
-
 # --- 2. Create and Start the LXC ---
 echo "--> Creating LXC container $CTID..."
-pct create $CTID ${TEMPLATE_STORAGE}:${TEMPLATE} \
+pct create $CTID ${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE} \
   --arch amd64 \
   --hostname $HOSTNAME \
   --cores $CORES \
