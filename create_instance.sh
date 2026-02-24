@@ -11,11 +11,18 @@ CTID=$(pvesh get /cluster/nextid)
 HOSTNAME="loki-logs"
 CORES=2
 MEMORY=2048
-DISK_SIZE="20G"
+DISK_SIZE="20"
 STORAGE="local-lvm"       # Change this if your VM storage is named differently (e.g., 'local-zfs')
 TEMPLATE_STORAGE="local"  # Where Proxmox stores downloaded templates
-NETWORK="name=eth0,bridge=vmbr0,ip=dhcp"
-PASSWORD=$(tr -dc A-Za-z0-9 </dev/urandom | head -c 16)
+PASSWORD="default"
+
+# Detect Gateway for static IP configuration to ensure internet access
+HOST_GATEWAY=$(ip route | grep default | awk '{print $3}' | head -n 1)
+if [ -z "$HOST_GATEWAY" ]; then
+    # Fallback if detection fails, though this might need adjustment for specific networks
+    HOST_GATEWAY="192.168.1.1"
+fi
+NETWORK="name=eth0,bridge=vmbr0,ip=192.168.1.223/24,gw=$HOST_GATEWAY"
 
 echo "--> Selected Container ID: $CTID"
 echo "--> Root Password will be: $PASSWORD"
@@ -23,11 +30,33 @@ echo "--> Root Password will be: $PASSWORD"
 # --- 1. Download the latest Debian 12 Template ---
 echo "--> Finding and downloading the latest Debian 12 template..."
 pveam update >/dev/null
-TEMPLATE=$(pveam available | grep -i 'system.*debian-12' | awk '{print $2}' | head -n 1)
-pveam download $TEMPLATE_STORAGE $TEMPLATE >/dev/null || true
+
+# Cleanly find the template name. We strip ANSI color codes just in case.
+TEMPLATE_NAME=$(pveam available --section system | sed 's/\x1b\[[0-9;]*m//g' | grep -i 'debian-12' | awk '{print $2}' | sort -r | head -n 1)
+
+if [ -z "$TEMPLATE_NAME" ]; then
+    echo "Error: Could not find a Debian 12 template."
+    exit 1
+fi
+
+echo "--> Detected template: $TEMPLATE_NAME"
+pveam download $TEMPLATE_STORAGE $TEMPLATE_NAME >/dev/null || true
+
 # --- 2. Create and Start the LXC ---
 echo "--> Creating LXC container $CTID..."
-pct create $CTID ${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE} \
+
+# Resolve the full Volume ID from storage to ensure we have a valid path for pct create
+# This handles cases where the constructed path might be incorrect or if pveam output format varies.
+TEMPLATE_VOLID=$(pvesm list $TEMPLATE_STORAGE --content vztmpl | grep "$TEMPLATE_NAME" | awk '{print $1}' | head -n 1)
+
+if [ -z "$TEMPLATE_VOLID" ]; then
+    echo "Warning: Could not find template volume ID using pvesm. Falling back to constructed path."
+    TEMPLATE_VOLID="${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE_NAME}"
+fi
+
+echo "--> Using Template Volume ID: $TEMPLATE_VOLID"
+
+pct create $CTID $TEMPLATE_VOLID \
   --arch amd64 \
   --hostname $HOSTNAME \
   --cores $CORES \
@@ -42,7 +71,7 @@ pct create $CTID ${TEMPLATE_STORAGE}:vztmpl/${TEMPLATE} \
 echo "--> Starting container $CTID..."
 pct start $CTID
 
-echo "--> Waiting for container network to initialize (DHCP)..."
+echo "--> Waiting for container network to initialize..."
 sleep 10
 
 # --- 3. Create the Installation Payload ---
@@ -98,16 +127,16 @@ systemctl daemon-reload
 systemctl enable --now garage
 sleep 3
 
-NODE_ID=$(garage status | grep "NO" | awk '{print $1}')
-garage layout assign -z dc1 -c 10G "$NODE_ID"
-garage layout apply --version 1
+NODE_ID=$(/usr/local/bin/garage status | grep "NO" | awk '{print $1}')
+/usr/local/bin/garage layout assign -z dc1 -c 10G "$NODE_ID"
+/usr/local/bin/garage layout apply --version 1
 
-KEY_OUTPUT=$(garage key create loki-key)
+KEY_OUTPUT=$(/usr/local/bin/garage key create loki-key)
 ACCESS_KEY=$(echo "$KEY_OUTPUT" | grep "Access key:" | awk '{print $3}')
 SECRET_KEY=$(echo "$KEY_OUTPUT" | grep "Secret key:" | awk '{print $3}')
 
-garage bucket create loki-logs
-garage bucket allow loki-logs --read --write --owner loki-key
+/usr/local/bin/garage bucket create loki-logs
+/usr/local/bin/garage bucket allow loki-logs --read --write --owner loki-key
 
 # Install Loki
 LOKI_VERSION="3.0.0"
