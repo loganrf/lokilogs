@@ -127,16 +127,16 @@ systemctl daemon-reload
 systemctl enable --now garage
 sleep 3
 
-NODE_ID=$(garage status | grep "NO" | awk '{print $1}')
-garage layout assign -z dc1 -c 10G "$NODE_ID"
-garage layout apply --version 1
+NODE_ID=$(/usr/local/bin/garage status | grep "NO" | awk '{print $1}')
+/usr/local/bin/garage layout assign -z dc1 -c 10G "$NODE_ID"
+/usr/local/bin/garage layout apply --version 1
 
-KEY_OUTPUT=$(garage key create loki-key)
+KEY_OUTPUT=$(/usr/local/bin/garage key create loki-key)
 ACCESS_KEY=$(echo "$KEY_OUTPUT" | grep "Access key:" | awk '{print $3}')
 SECRET_KEY=$(echo "$KEY_OUTPUT" | grep "Secret key:" | awk '{print $3}')
 
-garage bucket create loki-logs
-garage bucket allow loki-logs --read --write --owner loki-key
+/usr/local/bin/garage bucket create loki-logs
+/usr/local/bin/garage bucket allow loki-logs --read --write --owner loki-key
 
 # Install Loki
 LOKI_VERSION="3.0.0"
